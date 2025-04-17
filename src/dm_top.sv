@@ -89,7 +89,9 @@ module dm_top #(
   logic                             cmderror_valid;
   dm::cmderr_e                      cmderror;
   logic                             cmdbusy;
-  logic [dm::ProgBufSize-1:0][31:0] progbuf;
+  logic                             progbuf_rd;
+  logic [2:0]                       progbuf_rd_addr;
+  logic [63:0]                      progbuf_data;
   logic [dm::DataCount-1:0][31:0]   data_csrs_mem;
   logic [dm::DataCount-1:0][31:0]   data_mem_csrs;
   logic                             data_valid;
@@ -146,7 +148,9 @@ module dm_top #(
     .cmderror_valid_i        ( cmderror_valid        ),
     .cmderror_i              ( cmderror              ),
     .cmdbusy_i               ( cmdbusy               ),
-    .progbuf_o               ( progbuf               ),
+    .progbuf_rd_i            ( progbuf_rd            ),
+    .progbuf_rd_addr_i       ( progbuf_rd_addr       ),
+    .progbuf_data_o          ( progbuf_data          ),
     .data_i                  ( data_mem_csrs         ),
     .data_valid_i            ( data_valid            ),
     .data_o                  ( data_csrs_mem         ),
@@ -224,7 +228,9 @@ module dm_top #(
     .cmderror_valid_o        ( cmderror_valid        ),
     .cmderror_o              ( cmderror              ),
     .cmdbusy_o               ( cmdbusy               ),
-    .progbuf_i               ( progbuf               ),
+    .progbuf_rd_o            ( progbuf_rd            ),
+    .progbuf_rd_addr_o       ( progbuf_rd_addr       ),
+    .progbuf_data_i          ( progbuf_data          ),
     .data_i                  ( data_csrs_mem         ),
     .data_o                  ( data_mem_csrs         ),
     .data_valid_o            ( data_valid            ),

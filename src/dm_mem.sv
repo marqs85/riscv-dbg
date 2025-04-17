@@ -37,7 +37,9 @@ module dm_mem #(
   output logic [NrHarts-1:0]               halted_o,    // hart acknowledge halt
   output logic [NrHarts-1:0]               resuming_o,  // hart is resuming
 
-  input  logic [dm::ProgBufSize-1:0][31:0] progbuf_i,    // program buffer to expose
+  output logic                             progbuf_rd_o,
+  output logic [2:0]                       progbuf_rd_addr_o,
+  input  logic [63:0]                      progbuf_data_i,    // program buffer to expose
 
   input  logic [dm::DataCount-1:0][31:0]   data_i,       // data in
   output logic [dm::DataCount-1:0][31:0]   data_o,       // data out
@@ -82,7 +84,7 @@ module dm_mem #(
   localparam logic [DbgAddressBits-1:0] ResumingAddr  = 'h110;
   localparam logic [DbgAddressBits-1:0] ExceptionAddr = 'h118;
 
-  logic [dm::ProgBufSize/2-1:0][63:0]   progbuf;
+  //logic [dm::ProgBufSize/2-1:0][63:0]   progbuf;
   logic [7:0][63:0]   abstract_cmd;
   logic [NrHarts-1:0] halted_d, halted_q;
   logic [NrHarts-1:0] resuming_d, resuming_q;
@@ -116,9 +118,10 @@ module dm_mem #(
   assign resuming_q_aligned      = NrHartsAligned'(resuming_q);
   assign resuming_d              = NrHarts'(resuming_d_aligned);
 
-  // distinguish whether we need to forward data from the ROM or the FSM
+  // distinguish whether we need to forward data from the ROM/Progbuf or the FSM
   // latch the address for this
   logic fwd_rom_d, fwd_rom_q;
+  logic progbuf_rd_q;
   dm::ac_ar_cmd_t ac_ar;
 
   // Abstract Command Access Register
@@ -128,7 +131,9 @@ module dm_mem #(
   assign resuming_o  = resuming_q;
 
   // reshape progbuf
-  assign progbuf = progbuf_i;
+  //assign progbuf = progbuf_i;
+  assign progbuf_rd_addr_o = $clog2(dm::ProgBufSize)'(addr_i[DbgAddressBits-1:3] -
+                            ProgBufBaseAddr[DbgAddressBits-1:3]);
 
   typedef enum logic [1:0] { Idle, Go, Resume, CmdExecuting } state_e;
   state_e state_d, state_q;
@@ -213,7 +218,7 @@ module dm_mem #(
 
   // word mux for 32bit and 64bit buses
   logic [63:0] word_mux;
-  assign word_mux = (fwd_rom_q) ? rom_rdata : rdata_q;
+  assign word_mux = (fwd_rom_q) ? rom_rdata : (progbuf_rd_q ? progbuf_data_i : rdata_q);
 
 generate
   if (BusWidth == 64) begin : gen_word_mux64
@@ -232,6 +237,7 @@ generate
     rdata_d        = rdata_q;
     data_bits      = data_i;
     rdata          = '0;
+    progbuf_rd_o   = 1'b0;
 
     // write data in csr register
     data_valid_o   = 1'b0;
@@ -313,8 +319,10 @@ generate
           end
 
           else if ((addr_i[DbgAddressBits-1:0] >= ProgBufBaseAddr) && (addr_i[DbgAddressBits-1:0] <= ProgBufEndAddr)) begin
-            rdata_d = progbuf[$clog2(dm::ProgBufSize)'(addr_i[DbgAddressBits-1:3] -
-                          ProgBufBaseAddr[DbgAddressBits-1:3])];
+            //rdata_d = progbuf[$clog2(dm::ProgBufSize)'(addr_i[DbgAddressBits-1:3] -
+            //              ProgBufBaseAddr[DbgAddressBits-1:3])];
+            rdata_d = '0;
+            progbuf_rd_o = 1'b1;
           end
 
           // two slots for abstract command
@@ -520,11 +528,13 @@ endgenerate
   always_ff @(posedge clk_i or negedge rst_ni) begin : p_regs
     if (!rst_ni) begin
       fwd_rom_q       <= 1'b0;
+      progbuf_rd_q    <= 1'b0;
       rdata_q         <= '0;
       state_q         <= Idle;
       word_enable32_q <= 1'b0;
     end else begin
       fwd_rom_q       <= fwd_rom_d;
+      progbuf_rd_q    <= progbuf_rd_o;
       rdata_q         <= rdata_d;
       state_q         <= state_d;
       word_enable32_q <= addr_i[2];

@@ -15,6 +15,8 @@
  * Description: Debug CSRs. Communication over Debug Transport Module (DTM)
  */
 
+`define SBCS_ENABLE
+
 module dm_csrs #(
   parameter int unsigned        NrHarts          = 1,
   parameter int unsigned        BusWidth         = 32,
@@ -55,7 +57,10 @@ module dm_csrs #(
   input  dm::cmderr_e                       cmderror_i,        // this error occurred
   input  logic                              cmdbusy_i,         // cmd is currently busy executing
 
-  output logic [dm::ProgBufSize-1:0][31:0]  progbuf_o, // to system bus
+  input  logic                              progbuf_rd_i,      // from system bus
+  input  logic [2:0]                        progbuf_rd_addr_i, // from system bus
+  output logic [63:0]                       progbuf_data_o,    // to system bus
+
   output logic [dm::DataCount-1:0][31:0]    data_o,
 
   input  logic [dm::DataCount-1:0][31:0]    data_i,
@@ -175,7 +180,8 @@ module dm_csrs #(
 
   logic [NrHarts-1:0] havereset_d, havereset_q;
   // program buffer
-  logic [dm::ProgBufSize-1:0][31:0] progbuf_d, progbuf_q;
+  //logic [dm::ProgBufSize-1:0][31:0] progbuf_d, progbuf_q;
+  logic progbuf_wren;
   logic [dm::DataCount-1:0][31:0] data_d, data_q;
 
   logic [HartSelLen-1:0] selected_hart;
@@ -274,7 +280,8 @@ module dm_csrs #(
     dmcontrol_d         = dmcontrol_q;
     cmderr_d            = cmderr_q;
     command_d           = command_q;
-    progbuf_d           = progbuf_q;
+    //progbuf_d           = progbuf_q;
+    progbuf_wren        = 1'b0;
     data_d              = data_q;
     sbcs_d              = sbcs_q;
     sbaddr_d            = 64'(sbaddress_i);
@@ -315,7 +322,8 @@ module dm_csrs #(
         else if (dm_csr_addr == dm::Command)      resp_queue_inp.data = '0;
         else if (dm_csr_addr == dm::NextDM)       resp_queue_inp.data = next_dm_addr_i;
         else if ((dm_csr_addr >= (dm::ProgBuf0)) && (dm_csr_addr <= ProgBufEnd)) begin
-          resp_queue_inp.data = progbuf_q[dmi_req_i.addr[$clog2(dm::ProgBufSize)-1:0]];
+          //resp_queue_inp.data = progbuf_q[dmi_req_i.addr[$clog2(dm::ProgBufSize)-1:0]];
+          resp_queue_inp.data = '0; // readback not supported, see RV debug spec 3.14.15.
           if (!cmdbusy_i) begin
             // check whether we need to re-execute the command (just give a cmd_valid)
             // range of autoexecprogbuf is 31:16
@@ -438,7 +446,8 @@ module dm_csrs #(
         else if ((dm_csr_addr >= (dm::ProgBuf0)) && (dm_csr_addr <= ProgBufEnd)) begin
           // attempts to write them while busy is set does not change their value
           if (!cmdbusy_i) begin
-            progbuf_d[dmi_req_i.addr[$clog2(dm::ProgBufSize)-1:0]] = dmi_req_i.data;
+            //progbuf_d[dmi_req_i.addr[$clog2(dm::ProgBufSize)-1:0]] = dmi_req_i.data;
+            progbuf_wren = 1;
             // check whether we need to re-execute the command (just give a cmd_valid)
             // this should probably throw an error if executed during another command
             // was busy
@@ -576,7 +585,7 @@ module dm_csrs #(
   assign dmactive_o  = dmcontrol_q.dmactive;
   assign cmd_o       = command_q;
   assign cmd_valid_o = cmd_valid_q;
-  assign progbuf_o   = progbuf_q;
+  //assign progbuf_o   = progbuf_q;
   assign data_o      = data_q;
 
   assign resp_queue_pop = dmi_resp_ready_i & ~resp_queue_empty;
@@ -613,7 +622,7 @@ module dm_csrs #(
       command_q      <= '0;
       cmd_valid_q    <= '0;
       abstractauto_q <= '0;
-      progbuf_q      <= '0;
+      //progbuf_q      <= '0;
       data_q         <= '0;
       sbcs_q         <= '{default: '0,  sbaccess: 3'd2};
       sbaddr_q       <= '0;
@@ -641,7 +650,7 @@ module dm_csrs #(
         command_q                    <= '0;
         cmd_valid_q                  <= '0;
         abstractauto_q               <= '0;
-        progbuf_q                    <= '0;
+        //progbuf_q                    <= '0;
         data_q                       <= '0;
         sbcs_q                       <= '{default: '0,  sbaccess: 3'd2};
         sbaddr_q                     <= '0;
@@ -652,7 +661,7 @@ module dm_csrs #(
         command_q                    <= command_d;
         cmd_valid_q                  <= cmd_valid_d;
         abstractauto_q               <= abstractauto_d;
-        progbuf_q                    <= progbuf_d;
+        //progbuf_q                    <= progbuf_d;
         data_q                       <= data_d;
 `ifdef SBCS_ENABLE
         sbcs_q                       <= sbcs_d;
@@ -662,5 +671,51 @@ module dm_csrs #(
       end
     end
   end
+
+    altsyncram  progbuf_i (
+                .address_a (dmi_req_i.addr[$clog2(dm::ProgBufSize)-1:0]),
+                .address_b (progbuf_rd_addr_i),
+                .clock0 (clk_i),
+                .data_a (dmi_req_i.data),
+                .rden_b (progbuf_rd_i),
+                .wren_a (progbuf_wren),
+                .q_b (progbuf_data_o),
+                .aclr0 (1'b0),
+                .aclr1 (1'b0),
+                .addressstall_a (1'b0),
+                .addressstall_b (1'b0),
+                .byteena_a (1'b1),
+                .byteena_b (1'b1),
+                .clock1 (1'b1),
+                .clocken0 (1'b1),
+                .clocken1 (1'b1),
+                .clocken2 (1'b1),
+                .clocken3 (1'b1),
+                .data_b ({64{1'b1}}),
+                .eccstatus (),
+                .q_a (),
+                .rden_a (1'b1),
+                .wren_b (1'b0));
+    defparam
+        progbuf_i.address_aclr_b = "NONE",
+        progbuf_i.address_reg_b = "CLOCK0",
+        progbuf_i.clock_enable_input_a = "BYPASS",
+        progbuf_i.clock_enable_input_b = "BYPASS",
+        progbuf_i.clock_enable_output_b = "BYPASS",
+        progbuf_i.intended_device_family = "Cyclone IV E",
+        progbuf_i.lpm_type = "altsyncram",
+        progbuf_i.numwords_a = 16,
+        progbuf_i.numwords_b = 8,
+        progbuf_i.operation_mode = "DUAL_PORT",
+        progbuf_i.outdata_aclr_b = "NONE",
+        progbuf_i.outdata_reg_b = "UNREGISTERED",
+        progbuf_i.power_up_uninitialized = "FALSE",
+        progbuf_i.rdcontrol_reg_b = "CLOCK0",
+        progbuf_i.read_during_write_mode_mixed_ports = "OLD_DATA",
+        progbuf_i.widthad_a = 4,
+        progbuf_i.widthad_b = 3,
+        progbuf_i.width_a = 32,
+        progbuf_i.width_b = 64,
+        progbuf_i.width_byteena_a = 1;
 
 endmodule : dm_csrs
